@@ -446,20 +446,18 @@ void writePointsToSVG(const std::vector<point2>& point_1, const std::vector<poin
 
 int main(void){
     std::vector<point2> scan_points1;
-    std::vector<point2> scan_points2;
+    std::vector<point2> target_points;
     readScanPoints("./data/scan_1.txt", scan_points1);
-    readScanPoints("./data/scan_2.txt", scan_points2);
+    readScanPoints("./data/scan_2.txt", target_points);
 
-    auto trans_mat1 = makeTransformationMatrix(0.0f, 0.0f, 0.0f);
-    auto trans_mat2 = makeTransformationMatrix(1.0f, 0.0f, 0.5f);
-
+    auto trans_mat1 = makeTransformationMatrix(1.0f, 0.0f, 0.5f);
     transformPointsZeroCopy(trans_mat1, scan_points1);
-    transformPointsZeroCopy(trans_mat2, scan_points2);
+
+    const auto covs = compute_ndt_points(target_points);
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
-    const auto covs = compute_ndt_points(scan_points2);
-    ndt_scan_matching(trans_mat1, scan_points1, scan_points2, covs);
+    ndt_scan_matching(trans_mat1, scan_points1, target_points, covs);
 
     auto end_time = std::chrono::high_resolution_clock::now(); 
 
@@ -469,5 +467,5 @@ int main(void){
     auto microsec = (double)(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count()) / 1000;
     std::cout << (int)(microsec / 1000) << " mill sec" << std::endl;
 
-    writePointsToSVG(scan_points1, scan_points2, "scan_points.svg");
+    writePointsToSVG(scan_points1, target_points, "scan_points.svg");
 }
