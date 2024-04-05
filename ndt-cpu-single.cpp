@@ -105,11 +105,11 @@ point3 multiplyMatrixPoint3(const mat3x3& mat, const point3& vec) {
     return result;
 }
 
-point3 multtiplyPowPoint3(const point3& vec){
-    point3 result;
-    result.x = vec.x * vec.x;
-    result.y = vec.y * vec.y;
-    result.z = vec.z * vec.z;
+float multtiplyPowPoint3(const point3& vec){
+    float result;
+    result = vec.x * vec.x;
+    result += vec.y * vec.y;
+    result += vec.z * vec.z;
     return result;
 }
 
@@ -338,7 +338,7 @@ std::vector<mat2x2> compute_ndt_points(std::vector<point2>& points){
 }
 
 void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_points, const std::vector<point2>& target_points, std::vector<mat2x2> target_covs){
-    const size_t max_iter_num = 5;
+    const size_t max_iter_num = 20;
     const float max_distance2 = 3.0f * 3.0f;
     
     const size_t target_points_size = target_points.size();
@@ -418,6 +418,11 @@ void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_poin
         b_Point.z *= -1.0;
         const point3 delta = solve3x3(H_Mat,b_Point);
         trans_mat = multiplyMatrices3x3x2(trans_mat, expmap(delta));
+
+        if(multtiplyPowPoint3(delta) < 1e-4){
+            std::cout << "END NDT. ITER: " << iter << std::endl;
+            break;
+        }
     }
 }
 
