@@ -338,15 +338,15 @@ std::vector<mat2x2> compute_ndt_points(std::vector<point2>& points){
 }
 
 void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_points, const std::vector<point2>& target_points, std::vector<mat2x2> target_covs){
-    const auto max_iter_num = 5;
-    const auto max_distance2 = 3.0f * 3.0f;
+    const size_t max_iter_num = 5;
+    const float max_distance2 = 3.0f * 3.0f;
     
-    const auto target_points_size = target_points.size();
-    const auto source_points_size = source_points.size();
+    const size_t target_points_size = target_points.size();
+    const size_t source_points_size = source_points.size();
     std::vector<float> distances(target_points_size);
     std::vector<float> distances_(target_points_size);
 
-    for(auto iter = 0; iter < max_iter_num; iter++){
+    for(size_t iter = 0; iter < max_iter_num; iter++){
         mat3x3 H_Mat {
             0.0f, 0.0f, 0.0f, 
             0.0f, 0.0f, 0.0f, 
@@ -358,7 +358,7 @@ void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_poin
         };
 
         for(auto point_iter = 0; point_iter < source_points_size; point_iter += 10){
-            auto query_point = transformPointCopy(trans_mat, source_points[point_iter]);
+            point2 query_point = transformPointCopy(trans_mat, source_points[point_iter]);
             for(auto i = 0; i < target_points_size; i++){
                 const auto distance = (target_points[i].x - query_point.x) * (target_points[i].x - query_point.x) + (target_points[i].y - query_point.y) * (target_points[i].y - query_point.y);
                 distances[i] = distance;
@@ -366,16 +366,16 @@ void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_poin
             }
             std::sort(distances.begin(), distances.end());
 
-            auto target_index = 0;
-            for(auto i = 0; i < target_points_size; i++){
+            size_t target_index = 0;
+            for(size_t i = 0; i < target_points_size; i++){
                 if(distances[0] == distances_[i]){
                     target_index = i;
                 }
             }
 
-            const auto target_point = target_points[target_index];            
-            const auto target_distance = distances_[target_index];
-            const auto target_cov = target_covs[target_index];
+            const point2 target_point = target_points[target_index];            
+            const float target_distance = distances_[target_index];
+            const mat2x2 target_cov = target_covs[target_index];
 
             if(target_distance > max_distance2){continue;}
 
@@ -385,7 +385,7 @@ void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_poin
                 0.0f, 0.0f, 1.0f
             };
 
-            const auto target_cov_inv = inverse3x3Copy(identity_plus_cov); //IM
+            const mat3x3 target_cov_inv = inverse3x3Copy(identity_plus_cov); //IM
 
 
             const auto error = point3{
@@ -394,7 +394,7 @@ void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_poin
                 0.0f
             };
 
-            const auto v_point = transformPointCopy(trans_mat, skewd(source_points[point_iter]));
+            const point2 v_point = transformPointCopy(trans_mat, skewd(source_points[point_iter]));
 
             const auto mat_J = mat3x3{
                 trans_mat.a * -1.0f, trans_mat.b * -1.0f, v_point.x,
@@ -402,21 +402,21 @@ void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_poin
                 trans_mat.g * -1.0f, trans_mat.h * -1.0f, trans_mat.i * -1.0f
             };
 
-            const auto mat_J_T = transpose(mat_J);
+            const mat3x3 mat_J_T = transpose(mat_J);
 
-            const auto imj = multiplyMatrices3x3x2(target_cov_inv, mat_J);
-            const auto hMat_ = multiplyMatrices3x3x2(mat_J_T, imj);
+            const mat3x3 imj = multiplyMatrices3x3x2(target_cov_inv, mat_J);
+            const mat3x3 hMat_ = multiplyMatrices3x3x2(mat_J_T, imj);
             H_Mat = addMat3x3(H_Mat, hMat_);
 
-            const auto imerror = multiplyMatrixPoint3(target_cov_inv, error);
-            const auto bPoint_ = multiplyMatrixPoint3(mat_J_T, imerror);
+            const point3 imerror = multiplyMatrixPoint3(target_cov_inv, error);
+            const point3 bPoint_ = multiplyMatrixPoint3(mat_J_T, imerror);
             b_Point = addPoint3(b_Point, bPoint_);
 
         } 
         b_Point.x *= -1.0;
         b_Point.y *= -1.0;
         b_Point.z *= -1.0;
-        const auto delta = solve3x3(H_Mat,b_Point);
+        const point3 delta = solve3x3(H_Mat,b_Point);
         trans_mat = multiplyMatrices3x3x2(trans_mat, expmap(delta));
     }
 }
@@ -453,10 +453,9 @@ int main(void){
     auto trans_mat1 = makeTransformationMatrix(1.0f, 0.0f, 0.5f);
     transformPointsZeroCopy(trans_mat1, scan_points1);
 
-    const auto covs = compute_ndt_points(target_points);
-
     auto start_time = std::chrono::high_resolution_clock::now();
 
+    const auto covs = compute_ndt_points(target_points);
     ndt_scan_matching(trans_mat1, scan_points1, target_points, covs);
 
     auto end_time = std::chrono::high_resolution_clock::now(); 
