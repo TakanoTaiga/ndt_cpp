@@ -301,30 +301,21 @@ std::vector<mat2x2> compute_ndt_points(std::vector<point2>& points){
     auto N = 10;
     
     const auto point_size = points.size();
-    std::vector<float> distances(point_size);
-    std::vector<float> distances_(point_size);
 
+    std::vector<std::pair<float, size_t>> distances(point_size);
     std::vector<point2> compute_points(N);
 
     std::vector<mat2x2> covs;
 
     for(auto &point : points){
-        for(auto i = 0; i < point_size; i++){
-            const auto distance = (points[i].x - point.x) * (points[i].x - point.x) + (points[i].y - point.y) * (points[i].y - point.y);
-            distances[i] = distance;
-            distances_[i] = distance;
+        for(size_t i = 0; i < point_size; i++){
+            auto dx = points[i].x - point.x;
+            auto dy = points[i].y - point.y;
+            distances[i] = { dx * dx + dy * dy, i };
         }
-        
-        std::stable_sort(distances.begin(), distances.end());
-
-        for(auto i = 0; i < N; i++){
-            const auto target = distances[i];
-            for(auto j = 0; j < point_size; j++){
-                if(target == distances_[j]){
-                    compute_points[i] = points[j];
-                    break;
-                }
-            }
+        std::nth_element(distances.begin(), distances.begin() + N, distances.end());
+        for (size_t i = 0; i < N; i++){
+            compute_points[i] = points[distances[i].second];
         }
 
         const auto mean = compute_mean(compute_points);
@@ -343,8 +334,7 @@ void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_poin
     
     const size_t target_points_size = target_points.size();
     const size_t source_points_size = source_points.size();
-    std::vector<float> distances(target_points_size);
-    std::vector<float> distances_(target_points_size);
+    std::vector<std::pair<float, size_t>> distances(target_points_size);
 
     for(size_t iter = 0; iter < max_iter_num; iter++){
         mat3x3 H_Mat {
@@ -360,22 +350,16 @@ void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_poin
         for(auto point_iter = 0; point_iter < source_points_size; point_iter += 10){
             point2 query_point = transformPointCopy(trans_mat, source_points[point_iter]);
             for(auto i = 0; i < target_points_size; i++){
-                const auto distance = (target_points[i].x - query_point.x) * (target_points[i].x - query_point.x) + (target_points[i].y - query_point.y) * (target_points[i].y - query_point.y);
-                distances[i] = distance;
-                distances_[i] = distance;
-            }
-            std::stable_sort(distances.begin(), distances.end());
-
-            size_t target_index = 0;
-            for(size_t i = 0; i < target_points_size; i++){
-                if(distances[0] == distances_[i]){
-                    target_index = i;
-                }
+                auto dx = target_points[i].x - query_point.x;
+                auto dy = target_points[i].y - query_point.y;
+                distances[i] = { dx * dx + dy * dy, i };
             }
 
-            const point2 target_point = target_points[target_index];            
-            const float target_distance = distances_[target_index];
-            const mat2x2 target_cov = target_covs[target_index];
+            auto target_iter = std::min_element(distances.begin(), distances.end());
+
+            const point2 target_point = target_points[target_iter->second];
+            const float target_distance = target_iter->first;
+            const mat2x2 target_cov = target_covs[target_iter->second];
 
             if(target_distance > max_distance2){continue;}
 
@@ -464,7 +448,7 @@ int main(void){
     transformPointsZeroCopy(trans_mat1, scan_points1);
 
     //debug
-    auto microsec = (double)(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count()) / 1000;
+    auto microsec = std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count() / 1e6;
     std::cout << (microsec) << " mill sec" << std::endl;
 
     writePointsToSVG(scan_points1, target_points, "scan_points.svg");
