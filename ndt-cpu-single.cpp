@@ -62,8 +62,8 @@ void readScanPoints(const std::string& file_path, std::vector<point2>& points){
 
 mat3x3 makeTransformationMatrix(const float& tx, const float& ty, const float& theta) {
     mat3x3 mat = {
-        (float)cos(theta), (float)-sin(theta), tx,
-        (float)sin(theta), (float)cos(theta), ty,
+        cosf(theta), sinf(theta) * -1.0f, tx,
+        sinf(theta), cosf(theta)        , ty,
         0.0f, 0.0f, 1.0f
     };
     return mat;
@@ -106,27 +106,27 @@ point3 multiplyMatrixPoint3(const mat3x3& mat, const point3& vec) {
 }
 
 float multtiplyPowPoint3(const point3& vec){
-    float result;
-    result = vec.x * vec.x;
-    result += vec.y * vec.y;
-    result += vec.z * vec.z;
-    return result;
+    return vec.x * vec.x + vec.y * vec.y + vec.z * vec.z;
 }
 
-mat3x3 addMat3x3(const mat3x3& mat1, const mat3x3& mat2){
-    const mat3x3 result{
-        mat1.a + mat2.a, mat1.b + mat2.b, mat1.c + mat2.c, 
-        mat1.d + mat2.d, mat1.e + mat2.e, mat1.f + mat2.f, 
-        mat1.g + mat2.g, mat1.h + mat2.h, mat1.i + mat2.i
-    };
-    return result;
+void addMat3x3(mat3x3& mat1, const mat3x3& mat2){
+    mat1.a += mat2.a;
+    mat1.b += mat2.b;
+    mat1.c += mat2.c;
+
+    mat1.d += mat2.d;
+    mat1.e += mat2.e;
+    mat1.f += mat2.f;
+
+    mat1.g += mat2.g;
+    mat1.h += mat2.h;
+    mat1.i += mat2.i;
 }
 
-point3 addPoint3(const point3& point1, const point3& point2){
-    const point3 result{
-        point1.x + point2.x, point1.y + point2.y, point1.z + point2.z 
-    };
-    return result;
+void addPoint3(point3& point1, const point3& point2){
+    point1.x += point2.x;
+    point1.y += point2.y;
+    point1.z += point2.z;
 }
 
 point3 solve3x3(const mat3x3& m, const point3& p) {
@@ -180,8 +180,8 @@ point3 solve3x3(const mat3x3& m, const point3& p) {
 
 mat3x3 expmap(const point3& point){
     auto t = point.z;
-    auto c = (float)cos(t);
-    auto s = (float)sin(t);
+    auto c = cosf(t);
+    auto s = sinf(t);
 
     mat2x2 R {
         c, s * -1.0f,
@@ -337,7 +337,7 @@ std::vector<mat2x2> compute_ndt_points(std::vector<point2>& points){
     return covs;
 }
 
-void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_points, const std::vector<point2>& target_points, std::vector<mat2x2> target_covs){
+void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_points, const std::vector<point2>& target_points, const std::vector<mat2x2>& target_covs){
     const size_t max_iter_num = 20;
     const float max_distance2 = 3.0f * 3.0f;
     
@@ -404,13 +404,9 @@ void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_poin
 
             const mat3x3 mat_J_T = transpose(mat_J);
 
-            const mat3x3 imj = multiplyMatrices3x3x2(target_cov_inv, mat_J);
-            const mat3x3 hMat_ = multiplyMatrices3x3x2(mat_J_T, imj);
-            H_Mat = addMat3x3(H_Mat, hMat_);
+            addMat3x3(H_Mat, multiplyMatrices3x3x2(mat_J_T, multiplyMatrices3x3x2(target_cov_inv, mat_J)));
 
-            const point3 imerror = multiplyMatrixPoint3(target_cov_inv, error);
-            const point3 bPoint_ = multiplyMatrixPoint3(mat_J_T, imerror);
-            b_Point = addPoint3(b_Point, bPoint_);
+            addPoint3(b_Point, multiplyMatrixPoint3(mat_J_T, multiplyMatrixPoint3(target_cov_inv, error)));
 
         } 
         b_Point.x *= -1.0;
@@ -469,7 +465,7 @@ int main(void){
 
     //debug
     auto microsec = (double)(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count()) / 1000;
-    std::cout << (int)(microsec / 1000) << " mill sec" << std::endl;
+    std::cout << (microsec) << " mill sec" << std::endl;
 
     writePointsToSVG(scan_points1, target_points, "scan_points.svg");
 }
