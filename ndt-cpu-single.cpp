@@ -315,7 +315,7 @@ std::vector<mat2x2> compute_ndt_points(std::vector<point2>& points){
             distances_[i] = distance;
         }
         
-        std::sort(distances.begin(), distances.end());
+        std::stable_sort(distances.begin(), distances.end());
 
         for(auto i = 0; i < N; i++){
             const auto target = distances[i];
@@ -364,7 +364,7 @@ void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_poin
                 distances[i] = distance;
                 distances_[i] = distance;
             }
-            std::sort(distances.begin(), distances.end());
+            std::stable_sort(distances.begin(), distances.end());
 
             size_t target_index = 0;
             for(size_t i = 0; i < target_points_size; i++){
