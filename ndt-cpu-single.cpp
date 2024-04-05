@@ -248,7 +248,7 @@ mat3x3 inverse3x3Copy(const mat3x3& mat){
 point2 skewd(const point2& input_point){
     const point2 skewd_point {
         input_point.y,
-        input_point.x * -1.0
+        input_point.x * -1.0f
     };
     return skewd_point;
 }
