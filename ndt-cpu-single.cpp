@@ -430,7 +430,6 @@ void writePointsToSVG(const std::vector<point2>& point_1, const std::vector<poin
 }
 
 int main(void){
-    std::vector<point2> scan_points1;
     std::vector<point2> target_points;
     readScanPoints("./data/scan_1.txt", scan_points1);
     readScanPoints("./data/scan_2.txt", target_points);
