@@ -335,7 +335,6 @@ void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_poin
     
     const size_t target_points_size = target_points.size();
     const size_t source_points_size = source_points.size();
-    std::vector<std::pair<float, size_t>> distances(target_points_size);
 
     for(size_t iter = 0; iter < max_iter_num; iter++){
         mat3x3 H_Mat {
@@ -350,17 +349,21 @@ void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_poin
 
         for(auto point_iter = 0; point_iter < source_points_size; point_iter += 10){
             point2 query_point = transformPointCopy(trans_mat, source_points[point_iter]);
+            size_t target_index = 0;
+            float target_distance = std::numeric_limits<float>::infinity();
             for(auto i = 0; i < target_points_size; i++){
                 auto dx = target_points[i].x - query_point.x;
                 auto dy = target_points[i].y - query_point.y;
-                distances[i] = { dx * dx + dy * dy, i };
+                auto distance = dx * dx + dy * dy;
+
+                if(distance < target_distance){
+                    target_distance = distance;
+                    target_index = i;
+                }
             }
 
-            auto target_iter = std::min_element(distances.begin(), distances.end());
-
-            const point2 target_point = target_points[target_iter->second];
-            const float target_distance = target_iter->first;
-            const mat2x2 target_cov = target_covs[target_iter->second];
+            const point2 target_point = target_points[target_index];
+            const mat2x2 target_cov = target_covs[target_index];
 
             if(target_distance > max_distance2){continue;}
 
