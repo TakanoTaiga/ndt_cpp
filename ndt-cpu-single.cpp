@@ -306,6 +306,7 @@ std::vector<mat2x2> compute_ndt_points(std::vector<point2>& points){
     std::vector<point2> compute_points(N);
 
     std::vector<mat2x2> covs;
+    covs.reserve(point_size);
 
     for(auto &point : points){
         for(size_t i = 0; i < point_size; i++){
