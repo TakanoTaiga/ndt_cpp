@@ -12,18 +12,47 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <cstddef>
 #include <iostream>
 #include <fstream>
 #include <vector>
-#include <sstream> 
+#include <sstream>
 #include <cmath>
 #include <algorithm>
 #include <numeric>
 
 #include <chrono>
 
+#include "flatkdtree.h"
+
 struct point2{
     float x, y;
+};
+
+template <>
+struct kdtree::default_point_policy<point2>
+{
+    using point_type = point2;
+    using distance_type = float;
+
+    static constexpr std::size_t dimension = 2;
+
+    template <std::size_t Index>
+    auto element_compare(const point_type &p, const point_type &q) const -> bool
+    {
+        return Index == 0 ? p.x < q.x : p.y < q.y;
+    }
+
+    template <std::size_t Index>
+    auto element_distance(const point_type &p, const point_type &q) const -> distance_type
+    {
+        return Index == 0 ? (p.x - q.x) * (p.x - q.x) : (p.y - q.y) * (p.y - q.y);
+    }
+
+    auto distance(const point_type &p, const point_type &q) const -> distance_type
+    {
+        return (p.x - q.x) * (p.x - q.x) + (p.y - q.y) * (p.y - q.y);
+    }
 };
 
 struct point3{
@@ -39,6 +68,37 @@ struct mat3x3{
     float a, b, c;
     float d, e, f;
     float g, h, i;
+};
+
+struct ndtpoint2 {
+    point2 mean;
+    mat2x2 cov;
+};
+
+template <>
+struct kdtree::default_point_policy<ndtpoint2>
+{
+    using point_type = ndtpoint2;
+    using distance_type = float;
+
+    static constexpr std::size_t dimension = 2;
+
+    template <std::size_t Index>
+    auto element_compare(const point_type &p, const point_type &q) const -> bool
+    {
+        return Index == 0 ? p.mean.x < q.mean.x : p.mean.y < q.mean.y;
+    }
+
+    template <std::size_t Index>
+    auto element_distance(const point_type &p, const point_type &q) const -> distance_type
+    {
+        return Index == 0 ? (p.mean.x - q.mean.x) * (p.mean.x - q.mean.x) : (p.mean.y - q.mean.y) * (p.mean.y - q.mean.y);
+    }
+
+    auto distance(const point_type &p, const point_type &q) const -> distance_type
+    {
+        return (p.mean.x - q.mean.x) * (p.mean.x - q.mean.x) + (p.mean.y - q.mean.y) * (p.mean.y - q.mean.y);
+    }
 };
 
 void readScanPoints(const std::string& file_path, std::vector<point2>& points){
@@ -208,7 +268,7 @@ point2 transformPointCopy(const mat3x3& mat, const point2& point) {
 
 mat3x3 inverse3x3Copy(const mat3x3& mat){
     const auto a = 1.0 / (
-        mat.a * mat.e * mat.i + 
+        mat.a * mat.e * mat.i +
         mat.b * mat.f * mat.g +
         mat.c * mat.d * mat.h -
         mat.c * mat.e * mat.g -
@@ -297,49 +357,38 @@ mat2x2 compute_covariance(const std::vector<point2>& points, const point2& mean)
     return cov;
 }
 
-std::vector<mat2x2> compute_ndt_points(std::vector<point2>& points){
+void compute_ndt_points(std::vector<point2>& points, std::vector<ndtpoint2> &results){
     auto N = 10;
-    
+
     const auto point_size = points.size();
 
-    std::vector<std::pair<float, size_t>> distances(point_size);
-    std::vector<point2> compute_points(N);
+    kdtree::construct(points.begin(), points.end());
+    std::vector<point2> result_points(N);
+    std::vector<float> result_distances(N);
 
-    std::vector<mat2x2> covs;
+    std::vector<mat2x2> covs(point_size);
+    results.resize(point_size);
 
-    for(auto &point : points){
-        for(size_t i = 0; i < point_size; i++){
-            auto dx = points[i].x - point.x;
-            auto dy = points[i].y - point.y;
-            distances[i] = { dx * dx + dy * dy, i };
-        }
-        std::nth_element(distances.begin(), distances.begin() + N, distances.end());
-        for (size_t i = 0; i < N; i++){
-            compute_points[i] = points[distances[i].second];
-        }
-
-        const auto mean = compute_mean(compute_points);
-        const auto cov = compute_covariance(compute_points, mean);
-
-        point = mean;
-        covs.push_back(cov);
+    for(std::size_t i = 0; i < point_size; i++) {
+        kdtree::search_knn(points.begin(), points.end(), result_points.begin(), result_distances.begin(), N, points[i]);
+        const auto mean = compute_mean(result_points);
+        const auto cov = compute_covariance(result_points, mean);
+        results[i] = {mean, cov};
     }
-
-    return covs;
 }
 
-void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_points, const std::vector<point2>& target_points, const std::vector<mat2x2>& target_covs){
+void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_points, std::vector<ndtpoint2>& target_points){
     const size_t max_iter_num = 20;
     const float max_distance2 = 3.0f * 3.0f;
-    
+
     const size_t target_points_size = target_points.size();
     const size_t source_points_size = source_points.size();
-    std::vector<std::pair<float, size_t>> distances(target_points_size);
 
+    kdtree::construct(target_points.begin(), target_points.end());
     for(size_t iter = 0; iter < max_iter_num; iter++){
         mat3x3 H_Mat {
-            0.0f, 0.0f, 0.0f, 
-            0.0f, 0.0f, 0.0f, 
+            0.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, 0.0f,
             0.0f, 0.0f, 0.0f
         };
 
@@ -348,24 +397,16 @@ void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_poin
         };
 
         for(auto point_iter = 0; point_iter < source_points_size; point_iter += 10){
-            point2 query_point = transformPointCopy(trans_mat, source_points[point_iter]);
-            for(auto i = 0; i < target_points_size; i++){
-                auto dx = target_points[i].x - query_point.x;
-                auto dy = target_points[i].y - query_point.y;
-                distances[i] = { dx * dx + dy * dy, i };
-            }
-
-            auto target_iter = std::min_element(distances.begin(), distances.end());
-
-            const point2 target_point = target_points[target_iter->second];
-            const float target_distance = target_iter->first;
-            const mat2x2 target_cov = target_covs[target_iter->second];
+            ndtpoint2 query_point = {transformPointCopy(trans_mat, source_points[point_iter]), {}};
+            ndtpoint2 target_point;
+            float target_distance;
+            kdtree::search_knn(target_points.begin(), target_points.end(), &target_point, &target_distance, 1, query_point);
 
             if(target_distance > max_distance2){continue;}
 
             const auto identity_plus_cov = mat3x3{
-                target_cov.a, target_cov.b, 0.0f,
-                target_cov.c, target_cov.d, 0.0f,
+                target_point.cov.a, target_point.cov.b, 0.0f,
+                target_point.cov.c, target_point.cov.d, 0.0f,
                 0.0f, 0.0f, 1.0f
             };
 
@@ -373,8 +414,8 @@ void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_poin
 
 
             const auto error = point3{
-                target_point.x - query_point.x,
-                target_point.y - query_point.y,
+                target_point.mean.x - query_point.mean.x,
+                target_point.mean.y - query_point.mean.y,
                 0.0f
             };
 
@@ -392,7 +433,7 @@ void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_poin
 
             addPoint3(b_Point, multiplyMatrixPoint3(mat_J_T, multiplyMatrixPoint3(target_cov_inv, error)));
 
-        } 
+        }
         b_Point.x *= -1.0;
         b_Point.y *= -1.0;
         b_Point.z *= -1.0;
@@ -438,12 +479,13 @@ int main(void){
     auto trans_mat1 = makeTransformationMatrix(1.0f, 0.0f, 0.5f);
     transformPointsZeroCopy(trans_mat1, scan_points1);
 
+    auto ndt_points = std::vector<ndtpoint2>();
     auto start_time = std::chrono::high_resolution_clock::now();
 
-    const auto covs = compute_ndt_points(target_points);
-    ndt_scan_matching(trans_mat1, scan_points1, target_points, covs);
+    compute_ndt_points(target_points, ndt_points);
+    ndt_scan_matching(trans_mat1, scan_points1, ndt_points);
 
-    auto end_time = std::chrono::high_resolution_clock::now(); 
+    auto end_time = std::chrono::high_resolution_clock::now();
 
     transformPointsZeroCopy(trans_mat1, scan_points1);
 
