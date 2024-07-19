@@ -18,8 +18,6 @@
 #include <vector>
 #include <sstream>
 #include <cmath>
-#include <algorithm>
-#include <numeric>
 
 #include <chrono>
 
@@ -29,30 +27,17 @@ struct point2{
     float x, y;
 };
 
+template <std::size_t I>
+struct kdtree::trait::access<point2, I> {
+    static auto get(const point2 &p) -> float
+    {
+        return I == 0 ? p.x : p.y;
+    }
+};
+
 template <>
-struct kdtree::default_point_policy<point2>
-{
-    using point_type = point2;
-    using distance_type = float;
-
-    static constexpr std::size_t dimension = 2;
-
-    template <std::size_t Index>
-    auto element_compare(const point_type &p, const point_type &q) const -> bool
-    {
-        return Index == 0 ? p.x < q.x : p.y < q.y;
-    }
-
-    template <std::size_t Index>
-    auto element_distance(const point_type &p, const point_type &q) const -> distance_type
-    {
-        return Index == 0 ? (p.x - q.x) * (p.x - q.x) : (p.y - q.y) * (p.y - q.y);
-    }
-
-    auto distance(const point_type &p, const point_type &q) const -> distance_type
-    {
-        return (p.x - q.x) * (p.x - q.x) + (p.y - q.y) * (p.y - q.y);
-    }
+struct kdtree::trait::dimension<point2> {
+    static constexpr std::size_t value = 2;
 };
 
 struct point3{
@@ -75,30 +60,17 @@ struct ndtpoint2 {
     mat2x2 cov;
 };
 
+template <std::size_t I>
+struct kdtree::trait::access<ndtpoint2, I> {
+    static auto get(const ndtpoint2 &p) -> float
+    {
+        return I == 0 ? p.mean.x : p.mean.y;
+    }
+};
+
 template <>
-struct kdtree::default_point_policy<ndtpoint2>
-{
-    using point_type = ndtpoint2;
-    using distance_type = float;
-
-    static constexpr std::size_t dimension = 2;
-
-    template <std::size_t Index>
-    auto element_compare(const point_type &p, const point_type &q) const -> bool
-    {
-        return Index == 0 ? p.mean.x < q.mean.x : p.mean.y < q.mean.y;
-    }
-
-    template <std::size_t Index>
-    auto element_distance(const point_type &p, const point_type &q) const -> distance_type
-    {
-        return Index == 0 ? (p.mean.x - q.mean.x) * (p.mean.x - q.mean.x) : (p.mean.y - q.mean.y) * (p.mean.y - q.mean.y);
-    }
-
-    auto distance(const point_type &p, const point_type &q) const -> distance_type
-    {
-        return (p.mean.x - q.mean.x) * (p.mean.x - q.mean.x) + (p.mean.y - q.mean.y) * (p.mean.y - q.mean.y);
-    }
+struct kdtree::trait::dimension<ndtpoint2> {
+    static constexpr std::size_t value = 2;
 };
 
 void readScanPoints(const std::string& file_path, std::vector<point2>& points){
