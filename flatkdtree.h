@@ -20,86 +20,90 @@
 #include <cstddef>
 #include <iterator>
 #include <type_traits>
+#include <utility>
 
 namespace kdtree {
 
-template <typename T, typename Enabler = void>
-struct default_point_policy;
+namespace trait {
+  template <typename T, typename Enabler = void>
+  struct access
+  { };
 
-template <typename Float, std::size_t Size>
-struct default_point_policy<std::array<Float, Size>, typename std::enable_if<std::is_floating_point<Float>::value>::type>
-{
-  using point_type = std::array<Float, Size>;
-  using distance_type = Float;
-
-  static constexpr std::size_t dimension = Size;
-
-  template <std::size_t Index>
-  auto element_compare(const point_type &p, const point_type &q) const -> bool
+  template <typename T, std::size_t N>
+  struct access<std::array<T, N>, typename std::enable_if<std::is_arithmetic<T>::value>::type>
   {
-    return p[Index] < q[Index];
-  }
+    static constexpr std::size_t dimension = N;
 
-  template <std::size_t Index>
-  auto element_distance(const point_type &p, const point_type &q) const -> distance_type
-  {
-    return (p[Index] - q[Index]) * (p[Index] - q[Index]);
-  }
-
-  auto distance(const point_type &p, const point_type &q) const -> distance_type
-  {
-    distance_type dist = 0;
-    for (std::size_t i = 0; i < Size; ++i) {
-      dist += (p[i] - q[i]) * (p[i] - q[i]);
+    template <std::size_t I>
+    static auto get(const std::array<T, N> &t) -> T
+    {
+      return t[I];
     }
-    return dist;
-  }
-};
+  };
+}
 
 namespace internal {
-  template <typename Iterator>
-  using iter_value_type = typename std::iterator_traits<Iterator>::value_type;
-
-  template <int Dimension = 0, typename RandomAccessIterator, typename Policy>
-  auto construct_recursive(
-    RandomAccessIterator first, RandomAccessIterator last, const Policy &policy) -> void
+  template <std::size_t I, typename T>
+  auto get(const T &t) -> decltype(trait::access<typename std::decay<T>::type>::template get<I>(t))
   {
-    using point_type = typename Policy::point_type;
-
-    if (first == last) {
-      return;
-    }
-
-    const RandomAccessIterator middle = first + std::distance(first, last) / 2;
-
-    std::nth_element(first, middle, last, [&](const point_type &p, const point_type &q) {
-      return policy.template element_compare<Dimension>(p, q);
-    });
-
-    static constexpr std::size_t NextDimension = (Dimension + 1) % Policy::dimension;
-    construct_recursive<NextDimension>(first, middle, policy);
-    construct_recursive<NextDimension>(middle + 1, last, policy);
+    return trait::access<typename std::decay<T>::type>::template get<I>(t);
   }
 
-  template <
-    std::size_t Dimension = 0,
-    typename RandomAccessIterator1, typename RandomAccessIterator2, typename RandomAccessIterator3,
-    typename PointPolicy = default_point_policy<iter_value_type<RandomAccessIterator1>>>
-  auto search_knn_recursive(
-    RandomAccessIterator1 first, RandomAccessIterator1 last,
-    RandomAccessIterator2 out_point, RandomAccessIterator3 out_distance,
-    std::size_t k, std::size_t n, const internal::iter_value_type<RandomAccessIterator1> &query,
-    const PointPolicy &policy = {})
+  namespace detail {
+    template <typename S, typename T, std::size_t I>
+    struct distance
+    {
+      static auto apply(const S &s, const T &t) -> decltype((get<I>(s) - get<I>(t)) * (get<I>(s) - get<I>(t)))
+      {
+        return (get<I>(s) - get<I>(t)) * (get<I>(s) - get<I>(t)) + distance<S, T, I - 1>::apply(s, t);
+      }
+    };
+
+    template <typename S, typename T>
+    struct distance<S, T, 0>
+    {
+      static auto apply(const S &s, const T &t) -> decltype((get<0>(s) - get<0>(t)) * (get<0>(s) - get<0>(t)))
+      {
+        return (get<0>(s) - get<0>(t)) * (get<0>(s) - get<0>(t));
+      }
+    };
+  }
+
+  template <typename S, typename T>
+  auto distance(const S &s, const T &t) -> decltype(detail::distance<S, T, trait::access<S>::dimension - 1>::apply(s, t))
+  {
+    static_assert(trait::access<S>::dimension == trait::access<T>::dimension, "dimension mismatch");
+    return detail::distance<S, T, trait::access<S>::dimension - 1>::apply(s, t);
+  }
+
+  template <std::size_t D, typename I>
+  auto do_construct(I first, I last) -> void
+  {
+    using P = typename std::iterator_traits<I>::value_type;
+
+    const auto middle = first + std::distance(first, last) / 2;
+
+    std::nth_element(first, middle, last, [&](const P &l, const P &r) {
+      return get<D>(l) < get<D>(r);
+    });
+
+    constexpr auto ND = (D + 1) % trait::access<P>::dimension;
+    if (first != middle) {
+      do_construct<ND>(first, middle);
+    }
+    if (middle + 1 != last) {
+      do_construct<ND>(middle + 1, last);
+    }
+  }
+
+  template <std::size_t D, typename I1, typename I2, typename I3, typename Q>
+  auto do_search_knn(I1 first, I1 last, I2 out_point, I3 out_distance, std::size_t k, std::size_t n, const Q &query)
     -> std::size_t
   {
-    using distance_type = typename PointPolicy::distance_type;
+    using P = typename std::iterator_traits<I1>::value_type;
 
-    if (first == last) {
-      return n;
-    }
-
-    const RandomAccessIterator1 middle = first + std::distance(first, last) / 2;
-    distance_type distance = policy.distance(query, *middle);
+    const auto middle = first + std::distance(first, last) / 2;
+    auto distance = internal::distance(query, *middle);
 
     if (n < k) {
       // Insert the point to the heap.
@@ -137,22 +141,20 @@ namespace internal {
       out_point[p] = *middle;
     }
 
-    const auto search = [&](RandomAccessIterator1 first, RandomAccessIterator1 last) {
-      constexpr auto next_dimension = (Dimension + 1) % PointPolicy::dimension;
-      return search_knn_recursive<next_dimension>(first, last, out_point, out_distance, k, n, query, policy);
-    };
-
-    if (policy.template element_compare<Dimension>(query, *middle)) {
-      n = search(first, middle);
-
-      if (policy.template element_distance<Dimension>(*middle, query) < *out_distance) {
-        n = search(middle + 1, last);
+    constexpr auto ND = (D + 1) % trait::access<Q>::dimension;
+    if (get<D>(query) < get<D>(*middle)) {
+      if (first != middle) {
+        n = do_search_knn<ND>(first, middle, out_point, out_distance, k, n, query);
+      }
+      if (middle + 1 != last and (get<D>(query) - get<D>(*middle)) * (get<D>(query) - get<D>(*middle)) < *out_distance) {
+        n = do_search_knn<ND>(middle + 1, last, out_point, out_distance, k, n, query);
       }
     } else {
-      n = search(middle + 1, last);
-
-      if (policy.template element_distance<Dimension>(*middle, query) < *out_distance) {
-        n = search(first, middle);
+      if (middle + 1 != last) {
+        n = do_search_knn<ND>(middle + 1, last, out_point, out_distance, k, n, query);
+      }
+      if (first != middle and (get<D>(query) - get<D>(*middle)) * (get<D>(query) - get<D>(*middle)) < *out_distance) {
+        n = do_search_knn<ND>(first, middle, out_point, out_distance, k, n, query);
       }
     }
 
@@ -160,66 +162,21 @@ namespace internal {
   }
 }
 
-/**
- * Construct a k-d tree on a range of points.
- *
- * @tparam RandomAccessIterator The type of the iterator.
- * @tparam PointPolicy The policy for the point type.
- * @param first The iterator to the first element.
- * @param last The iterator to the last element.
- * @param policy The policy for the point type.
- */
-template <
-  typename RandomAccessIterator,
-  typename PointPolicy = default_point_policy<internal::iter_value_type<RandomAccessIterator>>>
-auto construct(RandomAccessIterator first, RandomAccessIterator last, const PointPolicy &policy = {})
-  -> void
+template <typename I>
+auto construct(I first, I last) -> void
 {
-  using point_type = typename PointPolicy::point_type;
-
-  static_assert(std::is_same<internal::iter_value_type<RandomAccessIterator>, point_type>::value,
-    "kd-tree point type is not compatible with the policy");
-
-  internal::construct_recursive(first, last, policy);
+  if (first != last) {
+    internal::do_construct<0>(first, last);
+  }
 }
 
-/**
- * Search k-nearest neighbors.
- *
- * @tparam RandomAccessIterator1 The type of the iterator for the points.
- * @tparam RandomAccessIterator2 The type of the iterator for the output points.
- * @tparam RandomAccessIterator3 The type of the iterator for the output distances.
- * @tparam PointPolicy The policy for the point type.
- * @param first The iterator to the first element.
- * @param last The iterator to the last element.
- * @param out_point The iterator to the first element of the output points.
- * @param out_distance The iterator to the first element of the output distances.
- * @param k The number of neighbors to search.
- * @param query The query point.
- * @param policy The policy for the point type.
- * @return The number of found neighbors.
- */
-template <
-  typename RandomAccessIterator1, typename RandomAccessIterator2, typename RandomAccessIterator3,
-  typename PointPolicy = default_point_policy<internal::iter_value_type<RandomAccessIterator1>>>
-auto search_knn(
-  RandomAccessIterator1 first, RandomAccessIterator1 last,
-  RandomAccessIterator2 out_point, RandomAccessIterator3 out_distance,
-  std::size_t k, const internal::iter_value_type<RandomAccessIterator1> &query,
-  const PointPolicy &policy = {})
-  -> std::size_t
+template <typename I1, typename I2, typename I3, typename Q>
+auto search_knn(I1 first, I1 last, I2 out_point, I3 out_distance, std::size_t k, const Q &query) -> std::size_t
 {
-  using point_type = typename PointPolicy::point_type;
-  using distance_type = typename PointPolicy::distance_type;
-
-  static_assert(std::is_same<internal::iter_value_type<RandomAccessIterator1>, point_type>::value,
-    "kd-tree point type is not compatible with the policy");
-  static_assert(std::is_same<internal::iter_value_type<RandomAccessIterator2>, point_type>::value,
-    "output point type is not compatible with the policy");
-  static_assert(std::is_same<internal::iter_value_type<RandomAccessIterator3>, distance_type>::value,
-    "output distance type is not compatible with the policy");
-
-  return internal::search_knn_recursive(first, last, out_point, out_distance, k, 0, query, policy);
+  if (first != last) {
+    return internal::do_search_knn<0>(first, last, out_point, out_distance, k, 0, query);
+  }
+  return 0;
 }
 
 } // namespace kdtree
