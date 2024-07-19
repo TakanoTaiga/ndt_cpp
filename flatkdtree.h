@@ -19,98 +19,143 @@
 #include <array>
 #include <cstddef>
 #include <iterator>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
 namespace kdtree {
 
 namespace trait {
-  template <typename T, typename Enabler = void>
+  template <typename T, std::size_t I, typename Enabler = void>
   struct access
   { };
 
-  template <typename T, std::size_t N>
-  struct access<std::array<T, N>, typename std::enable_if<std::is_arithmetic<T>::value>::type>
+  template <typename T>
+  struct access<T, 0, typename std::enable_if<std::is_arithmetic<T>::value>::type>
   {
-    static constexpr std::size_t dimension = N;
-
-    template <std::size_t I>
-    static auto get(const std::array<T, N> &t) -> T
+    static T get(const T &t)
     {
-      return t[I];
+      return t;
+    }
+  };
+
+  namespace detail {
+    template <typename T, std::size_t = std::tuple_size<T>::value>
+    using require_tuple = void;
+  }
+
+  template <typename T, std::size_t I>
+  struct access<T, I, detail::require_tuple<T>>
+  {
+    static auto get(const T &t) -> typename std::tuple_element<I, T>::type
+    {
+      using std::get;
+      return get<I>(t);
+    }
+  };
+
+  template <typename T, typename Enabler = void>
+  struct dimension
+  { };
+
+  template <typename T>
+  struct dimension<T, typename std::enable_if<std::is_arithmetic<T>::value>::type>
+  {
+    static constexpr std::size_t value = 1;
+  };
+
+  template <typename T>
+  struct dimension<T, detail::require_tuple<T>>
+  {
+    static constexpr std::size_t value = std::tuple_size<T>::value;
+  };
+
+  template <typename S, typename T, typename Enabler = void>
+  struct compare
+  {
+    static bool apply(const S &lhs, const T &rhs)
+    {
+      return lhs < rhs;
+    }
+  };
+
+  namespace detail {
+    template <typename R, typename S, typename T, std::size_t L>
+    struct default_squared_distance
+    {
+      static R apply(const S &s, const T &t)
+      {
+        R d = static_cast<R>(access<S, L>::get(s)) - static_cast<R>(access<T, L>::get(t));
+        return d * d + default_squared_distance<R, S, T, L - 1>::apply(s, t);
+      }
+    };
+
+    template <typename R, typename S, typename T>
+    struct default_squared_distance<R, S, T, 0>
+    {
+      static R apply(const S &s, const T &t)
+      {
+        R d = static_cast<R>(access<S, 0>::get(s)) - static_cast<R>(access<T, 0>::get(t));
+        return d * d;
+      }
+    };
+  }
+
+  template <typename R, typename S, typename T, typename Enabler = void>
+  struct squared_distance
+  {
+    static R apply(const S &s, const T &t)
+    {
+      return detail::default_squared_distance<R, S, T, dimension<S>::value - 1>::apply(s, t);
     }
   };
 }
 
 namespace internal {
   template <std::size_t I, typename T>
-  auto get(const T &t) -> decltype(trait::access<typename std::decay<T>::type>::template get<I>(t))
-  {
-    return trait::access<typename std::decay<T>::type>::template get<I>(t);
-  }
+  auto get(const T &t) -> decltype(trait::access<T, I>::get(t)) { return trait::access<T, I>::get(t); }
 
-  namespace detail {
-    template <typename S, typename T, std::size_t I>
-    struct distance
-    {
-      static auto apply(const S &s, const T &t) -> decltype((get<I>(s) - get<I>(t)) * (get<I>(s) - get<I>(t)))
-      {
-        return (get<I>(s) - get<I>(t)) * (get<I>(s) - get<I>(t)) + distance<S, T, I - 1>::apply(s, t);
-      }
-    };
-
-    template <typename S, typename T>
-    struct distance<S, T, 0>
-    {
-      static auto apply(const S &s, const T &t) -> decltype((get<0>(s) - get<0>(t)) * (get<0>(s) - get<0>(t)))
-      {
-        return (get<0>(s) - get<0>(t)) * (get<0>(s) - get<0>(t));
-      }
-    };
-  }
+  template <typename T>
+  constexpr std::size_t dimension() { return trait::dimension<T>::value; }
 
   template <typename S, typename T>
-  auto distance(const S &s, const T &t) -> decltype(detail::distance<S, T, trait::access<S>::dimension - 1>::apply(s, t))
-  {
-    static_assert(trait::access<S>::dimension == trait::access<T>::dimension, "dimension mismatch");
-    return detail::distance<S, T, trait::access<S>::dimension - 1>::apply(s, t);
-  }
+  bool compare(const S &lhs, const T &rhs) { return trait::compare<S, T>::apply(lhs, rhs); }
 
-  template <std::size_t D, typename I>
-  auto do_construct(I first, I last) -> void
+  template <typename R, typename S, typename T>
+  R squared_distance(const S &s, const T &t) { return trait::squared_distance<R, S, T>::apply(s, t); }
+
+  template <std::size_t L, typename I>
+  void do_construct(I first, I last)
   {
     using P = typename std::iterator_traits<I>::value_type;
 
-    const auto middle = first + std::distance(first, last) / 2;
+    const I middle = first + std::distance(first, last) / 2;
+    std::nth_element(first, middle, last, [&](const P &l, const P &r) { return compare(get<L>(l), get<L>(r)); });
 
-    std::nth_element(first, middle, last, [&](const P &l, const P &r) {
-      return get<D>(l) < get<D>(r);
-    });
-
-    constexpr auto ND = (D + 1) % trait::access<P>::dimension;
+    constexpr std::size_t NL = (L + 1) % dimension<P>();
     if (first != middle) {
-      do_construct<ND>(first, middle);
+      do_construct<NL>(first, middle);
     }
     if (middle + 1 != last) {
-      do_construct<ND>(middle + 1, last);
+      do_construct<NL>(middle + 1, last);
     }
   }
 
-  template <std::size_t D, typename I1, typename I2, typename I3, typename Q>
-  auto do_search_knn(I1 first, I1 last, I2 out_point, I3 out_distance, std::size_t k, std::size_t n, const Q &query)
-    -> std::size_t
+  template <std::size_t L, typename I, typename OP, typename OD, typename Q>
+  std::size_t do_search_knn(I first, I last, OP out_point, OD out_distance, std::size_t k, std::size_t n, const Q &query)
   {
-    using P = typename std::iterator_traits<I1>::value_type;
+    using P = typename std::iterator_traits<I>::value_type;
+    using D = typename std::iterator_traits<OD>::value_type;
 
-    const auto middle = first + std::distance(first, last) / 2;
-    auto distance = internal::distance(query, *middle);
+    const I middle = first + std::distance(first, last) / 2;
+    const D distance = squared_distance<D>(query, *middle);
 
     if (n < k) {
       // Insert the point to the heap.
       std::size_t i = n;
       while (i > 0) {
-        std::size_t p = (i - 1) >> 1;
-        if (distance < out_distance[p]) {
+        const std::size_t p = (i - 1) >> 1;
+        if (compare(distance, out_distance[p])) {
           break;
         }
 
@@ -121,15 +166,15 @@ namespace internal {
       out_distance[i] = std::move(distance);
       out_point[i] = *middle;
       ++n;
-    } else if (distance < *out_distance) {
+    } else if (compare(distance, *out_distance)) {
       // Replace the root of the heap.
       std::size_t p = 0;
       for (std::size_t i = 1; i < n; i = (p << 1) | 1) {
-        if (i + 1 < n and out_distance[i] < out_distance[i + 1]) {
+        if (i + 1 < n and compare(out_distance[i], out_distance[i + 1])) {
           ++i;
         }
 
-        if (out_distance[i] < distance) {
+        if (compare(out_distance[i], distance)) {
           break;
         }
 
@@ -141,37 +186,36 @@ namespace internal {
       out_point[p] = *middle;
     }
 
-    constexpr auto ND = (D + 1) % trait::access<Q>::dimension;
-    if (get<D>(query) < get<D>(*middle)) {
+    constexpr std::size_t NL = (L + 1) % dimension<P>();
+    if (compare(get<L>(query), get<L>(*middle))) {
       if (first != middle) {
-        n = do_search_knn<ND>(first, middle, out_point, out_distance, k, n, query);
+        n = do_search_knn<NL>(first, middle, out_point, out_distance, k, n, query);
       }
-      if (middle + 1 != last and (get<D>(query) - get<D>(*middle)) * (get<D>(query) - get<D>(*middle)) < *out_distance) {
-        n = do_search_knn<ND>(middle + 1, last, out_point, out_distance, k, n, query);
+      if (middle + 1 != last and compare(squared_distance<D>(get<L>(query), get<L>(*middle)), *out_distance)) {
+        n = do_search_knn<NL>(middle + 1, last, out_point, out_distance, k, n, query);
       }
     } else {
       if (middle + 1 != last) {
-        n = do_search_knn<ND>(middle + 1, last, out_point, out_distance, k, n, query);
+        n = do_search_knn<NL>(middle + 1, last, out_point, out_distance, k, n, query);
       }
-      if (first != middle and (get<D>(query) - get<D>(*middle)) * (get<D>(query) - get<D>(*middle)) < *out_distance) {
-        n = do_search_knn<ND>(first, middle, out_point, out_distance, k, n, query);
+      if (first != middle and compare(squared_distance<D>(get<L>(query), get<L>(*middle)), *out_distance)) {
+        n = do_search_knn<NL>(first, middle, out_point, out_distance, k, n, query);
       }
     }
-
     return n;
   }
 }
 
 template <typename I>
-auto construct(I first, I last) -> void
+void construct(I first, I last)
 {
   if (first != last) {
     internal::do_construct<0>(first, last);
   }
 }
 
-template <typename I1, typename I2, typename I3, typename Q>
-auto search_knn(I1 first, I1 last, I2 out_point, I3 out_distance, std::size_t k, const Q &query) -> std::size_t
+template <typename I, typename OP, typename OD, typename Q>
+std::size_t search_knn(I first, I last, OP out_point, OD out_distance, std::size_t k, const Q &query)
 {
   if (first != last) {
     return internal::do_search_knn<0>(first, last, out_point, out_distance, k, 0, query);

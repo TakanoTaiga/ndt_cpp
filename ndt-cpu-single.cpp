@@ -18,8 +18,6 @@
 #include <vector>
 #include <sstream>
 #include <cmath>
-#include <algorithm>
-#include <numeric>
 
 #include <chrono>
 
@@ -29,15 +27,17 @@ struct point2{
     float x, y;
 };
 
-template <>
-struct kdtree::trait::access<point2> {
-    static constexpr std::size_t dimension = 2;
-
-    template <std::size_t I>
+template <std::size_t I>
+struct kdtree::trait::access<point2, I> {
     static auto get(const point2 &p) -> float
     {
         return I == 0 ? p.x : p.y;
     }
+};
+
+template <>
+struct kdtree::trait::dimension<point2> {
+    static constexpr std::size_t value = 2;
 };
 
 struct point3{
@@ -60,15 +60,17 @@ struct ndtpoint2 {
     mat2x2 cov;
 };
 
-template <>
-struct kdtree::trait::access<ndtpoint2> {
-    static constexpr std::size_t dimension = 2;
-
-    template <std::size_t I>
+template <std::size_t I>
+struct kdtree::trait::access<ndtpoint2, I> {
     static auto get(const ndtpoint2 &p) -> float
     {
         return I == 0 ? p.mean.x : p.mean.y;
     }
+};
+
+template <>
+struct kdtree::trait::dimension<ndtpoint2> {
+    static constexpr std::size_t value = 2;
 };
 
 void readScanPoints(const std::string& file_path, std::vector<point2>& points){
