@@ -13,12 +13,13 @@
 // limitations under the License.
 
 #include <cstddef>
-#include <iostream>
 #include <fstream>
-#include <vector>
+#include <iostream>
 #include <sstream>
-#include <cmath>
+#include <vector>
 #include <unordered_map>
+#include <cmath>
+#include <numeric>
 
 #include <chrono>
 
@@ -103,15 +104,16 @@ ndtcpp::point3 solve3x3(const ndtcpp::mat3x3& m, const ndtcpp::point3& p) {
         {m.g, m.h, m.i, p.z}
     };
 
-    int n = 3;
+    const int n = 3;
 
     for (int i = 0; i < n; i++) {
         // Pivot選択
         float maxEl = std::abs(A[i][i]);
         int maxRow = i;
         for (int k = i+1; k < n; k++) {
-            if (std::abs(A[k][i]) > maxEl) {
-                maxEl = std::abs(A[k][i]);
+            const auto el = std::abs(A[k][i]);
+            if (el > maxEl) {
+                maxEl = el;
                 maxRow = k;
             }
         }
@@ -125,7 +127,7 @@ ndtcpp::point3 solve3x3(const ndtcpp::mat3x3& m, const ndtcpp::point3& p) {
 
         // すべての行について消去を行う
         for (int k = i+1; k < n; k++) {
-            float c = -A[k][i] / A[i][i];
+            const float c = -A[k][i] / A[i][i];
             for (int j = i; j < n+1; j++) {
                 if (i == j) {
                     A[k][j] = 0.0f;
@@ -174,7 +176,7 @@ ndtcpp::point2 transformPointCopy(const ndtcpp::mat3x3& mat, const ndtcpp::point
 }
 
 ndtcpp::mat3x3 inverse3x3Copy(const ndtcpp::mat3x3& mat){
-    const auto a = 1.0 / (
+    const auto a = 1.0f / (
         mat.a * mat.e * mat.i +
         mat.b * mat.f * mat.g +
         mat.c * mat.d * mat.h -
@@ -284,9 +286,9 @@ void compute_ndt_points(std::vector<ndtcpp::point2>& points, std::vector<ndtpoin
     }
 }
 
-inline void compute_ndt_points2(
+void compute_ndt_points2(
     const std::vector<ndtcpp::point2>& points, std::vector<ndtpoint2> &results,
-    float voxel_size = 1.0f, std::size_t voxel_min_count = 4){
+    float voxel_size = 1.0f, std::size_t voxel_min_count = 4) {
 
     const auto point_size = points.size();
 
@@ -390,7 +392,13 @@ void ndt_scan_matching(
         b_Point.x *= -1.0f;
         b_Point.y *= -1.0f;
         b_Point.z *= -1.0f;
-        const ndtcpp::point3 delta = solve3x3(H_Mat,b_Point);
+
+        // more stable solve
+        H_Mat.a += 1e-6;
+        H_Mat.e += 1e-6;
+        H_Mat.i += 1e-6;
+
+        const ndtcpp::point3 delta = solve3x3(H_Mat, b_Point);
         trans_mat = trans_mat * expmap(delta);
 
         const float error = multiplyPowPoint3(delta);
@@ -399,10 +407,10 @@ void ndt_scan_matching(
         }
 
         if (iter > 0) {
-            const ndtcpp::point3 ddelta = {
-                prev_delta.x - delta.x, prev_delta.y - delta.y, prev_delta.z - delta.z
-            };
-            const auto d = std::max(std::max(std::fabs(ddelta.x), std::fabs(ddelta.y)), std::fabs(ddelta.z));
+            const float dx = prev_delta.x - delta.x;
+            const float dy = prev_delta.y - delta.y;
+            const float dz = prev_delta.z - delta.z;
+            const auto d = std::max(std::max(std::fabs(dx), std::fabs(dy)), std::fabs(dz));
             if (d < 1e-4) {
                 is_converged = true;
             }
@@ -498,28 +506,43 @@ void writePointsToSVG(const std::vector<ndtcpp::point2>& point_1, const std::vec
     file.close();
 }
 
+
 int main(void){
+
     auto scan_points1 = ndtcpp::read_scan_points("./data/scan_1.txt");
     auto target_points = ndtcpp::read_scan_points("./data/scan_2.txt");
 
-    auto trans_mat1 = makeTransformationMatrix(1.0f, 0.0f, 0.5f);
-    transformPointsZeroCopy(trans_mat1, scan_points1);
+    std::vector<double> durations;
+    const size_t N = 10;
 
-    auto ndt_points = std::vector<ndtpoint2>();
-    auto start_time = std::chrono::high_resolution_clock::now();
+    for (size_t i = 0; i < N; ++i) {
 
-    // compute_ndt_points(target_points, ndt_points);
-    compute_ndt_points2(target_points, ndt_points);
-    ndt_scan_matching(trans_mat1, scan_points1, ndt_points);
+        auto source = scan_points1;
+        auto target = target_points;
+        auto trans_mat1 = makeTransformationMatrix(1.0f, 0.0f, 0.5f);
+        transformPointsZeroCopy(trans_mat1, source);
 
-    auto end_time = std::chrono::high_resolution_clock::now();
+        auto ndt_points = std::vector<ndtpoint2>();
+        auto start_time = std::chrono::high_resolution_clock::now();
 
-    transformPointsZeroCopy(trans_mat1, scan_points1);
+        const bool verbose = true;
+        // compute_ndt_points(target, ndt_points);
+        compute_ndt_points2(target, ndt_points);
+        ndt_scan_matching(trans_mat1, source, ndt_points, verbose);
 
-    //debug
-    auto microsec = std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count() / 1e6;
-    std::cout << (microsec) << " mill sec" << std::endl;
+        auto end_time = std::chrono::high_resolution_clock::now();
 
-    writePointsToSVG(scan_points1, target_points, "scan_points.svg");
-    writePointsToSVG(scan_points1, ndt_points, "scan_points_ndt.svg");
+        transformPointsZeroCopy(trans_mat1, source);
+
+        //debug
+        auto microsec = std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count() / 1e6;
+        durations.push_back(microsec);
+        if (i == N - 1) {
+            writePointsToSVG(source, target, "scan_points.svg");
+            writePointsToSVG(source, ndt_points, "scan_points_ndt.svg");
+        }
+    }
+    const double mean = std::accumulate(durations.begin(), durations.end(), 0.0) / durations.size();
+    std::cout << "MEAN: " << mean << " mill sec" << std::endl;
+
 }
