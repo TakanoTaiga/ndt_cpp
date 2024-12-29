@@ -22,42 +22,27 @@
 #include <chrono>
 
 #include "flatkdtree.h"
+#include "type.hpp"
+#include "ndtcpputil.hpp"
+#include "matrixutil.hpp"
 
-struct point2{
-    float x, y;
-};
 
 template <std::size_t I>
-struct kdtree::trait::access<point2, I> {
-    static auto get(const point2 &p) -> float
+struct kdtree::trait::access<ndtcpp::point2, I> {
+    static auto get(const ndtcpp::point2 &p) -> float
     {
         return I == 0 ? p.x : p.y;
     }
 };
 
 template <>
-struct kdtree::trait::dimension<point2> {
+struct kdtree::trait::dimension<ndtcpp::point2> {
     static constexpr std::size_t value = 2;
 };
 
-struct point3{
-    float x, y, z;
-};
-
-struct mat2x2{
-    float a, b;
-    float c, d;
-};
-
-struct mat3x3{
-    float a, b, c;
-    float d, e, f;
-    float g, h, i;
-};
-
 struct ndtpoint2 {
-    point2 mean;
-    mat2x2 cov;
+    ndtcpp::point2 mean;
+    ndtcpp::mat2x2 cov;
 };
 
 template <std::size_t I>
@@ -73,27 +58,10 @@ struct kdtree::trait::dimension<ndtpoint2> {
     static constexpr std::size_t value = 2;
 };
 
-void readScanPoints(const std::string& file_path, std::vector<point2>& points){
-    std::ifstream file(file_path);
-    if (!file.is_open()) {
-        std::cerr << "File could not be opened." << std::endl;
-        return;
-    }
 
-    std::string line_str;
-    point2 p;
-    while(std::getline(file, line_str)){
-        std::istringstream iss(line_str);
-        if (!(iss >> p.x >> p.y)) {
-            std::cerr << "Failed to parse line: " << line_str << std::endl;
-            continue;
-        }
-        points.push_back(p);
-    }
-}
 
-mat3x3 makeTransformationMatrix(const float& tx, const float& ty, const float& theta) {
-    mat3x3 mat = {
+ndtcpp::mat3x3 makeTransformationMatrix(const float& tx, const float& ty, const float& theta) {
+    ndtcpp::mat3x3 mat = {
         cosf(theta), sinf(theta) * -1.0f, tx,
         sinf(theta), cosf(theta)        , ty,
         0.0f, 0.0f, 1.0f
@@ -101,8 +69,8 @@ mat3x3 makeTransformationMatrix(const float& tx, const float& ty, const float& t
     return mat;
 }
 
-void transformPointsZeroCopy(const mat3x3& mat, std::vector<point2>& points) {
-    point2 transformedPoint;
+void transformPointsZeroCopy(const ndtcpp::mat3x3& mat, std::vector<ndtcpp::point2>& points) {
+    ndtcpp::point2 transformedPoint;
 
     for (auto& point : points) {
         transformedPoint.x = mat.a * point.x + mat.b * point.y + mat.c;
@@ -112,56 +80,11 @@ void transformPointsZeroCopy(const mat3x3& mat, std::vector<point2>& points) {
     }
 }
 
-mat3x3 multiplyMatrices3x3x2(const mat3x3& mat1, const mat3x3& mat2) {
-    mat3x3 result;
-    result.a = mat1.a * mat2.a + mat1.b * mat2.d + mat1.c * mat2.g;
-    result.b = mat1.a * mat2.b + mat1.b * mat2.e + mat1.c * mat2.h;
-    result.c = mat1.a * mat2.c + mat1.b * mat2.f + mat1.c * mat2.i;
-
-    result.d = mat1.d * mat2.a + mat1.e * mat2.d + mat1.f * mat2.g;
-    result.e = mat1.d * mat2.b + mat1.e * mat2.e + mat1.f * mat2.h;
-    result.f = mat1.d * mat2.c + mat1.e * mat2.f + mat1.f * mat2.i;
-
-    result.g = mat1.g * mat2.a + mat1.h * mat2.d + mat1.i * mat2.g;
-    result.h = mat1.g * mat2.b + mat1.h * mat2.e + mat1.i * mat2.h;
-    result.i = mat1.g * mat2.c + mat1.h * mat2.f + mat1.i * mat2.i;
-
-    return result;
-}
-
-point3 multiplyMatrixPoint3(const mat3x3& mat, const point3& vec) {
-    point3 result;
-    result.x = mat.a * vec.x + mat.b * vec.y + mat.c * vec.z;
-    result.y = mat.d * vec.x + mat.e * vec.y + mat.f * vec.z;
-    result.z = mat.g * vec.x + mat.h * vec.y + mat.i * vec.z;
-    return result;
-}
-
-float multtiplyPowPoint3(const point3& vec){
+float multtiplyPowPoint3(const ndtcpp::point3& vec){
     return vec.x * vec.x + vec.y * vec.y + vec.z * vec.z;
 }
 
-void addMat3x3(mat3x3& mat1, const mat3x3& mat2){
-    mat1.a += mat2.a;
-    mat1.b += mat2.b;
-    mat1.c += mat2.c;
-
-    mat1.d += mat2.d;
-    mat1.e += mat2.e;
-    mat1.f += mat2.f;
-
-    mat1.g += mat2.g;
-    mat1.h += mat2.h;
-    mat1.i += mat2.i;
-}
-
-void addPoint3(point3& point1, const point3& point2){
-    point1.x += point2.x;
-    point1.y += point2.y;
-    point1.z += point2.z;
-}
-
-point3 solve3x3(const mat3x3& m, const point3& p) {
+ndtcpp::point3 solve3x3(const ndtcpp::mat3x3& m, const ndtcpp::point3& p) {
     float A[3][4] = {
         {m.a, m.b, m.c, p.x},
         {m.d, m.e, m.f, p.y},
@@ -202,7 +125,7 @@ point3 solve3x3(const mat3x3& m, const point3& p) {
     }
 
     // 解の計算 (後退代入)
-    point3 solution;
+    ndtcpp::point3 solution;
     solution.z = A[2][3] / A[2][2];
     solution.y = (A[1][3] - A[1][2] * solution.z) / A[1][1];
     solution.x = (A[0][3] - A[0][2] * solution.z - A[0][1] * solution.y) / A[0][0];
@@ -210,17 +133,17 @@ point3 solve3x3(const mat3x3& m, const point3& p) {
     return solution;
 }
 
-mat3x3 expmap(const point3& point){
+ndtcpp::mat3x3 expmap(const ndtcpp::point3& point){
     auto t = point.z;
     auto c = cosf(t);
     auto s = sinf(t);
 
-    mat2x2 R {
+    ndtcpp::mat2x2 R {
         c, s * -1.0f,
         s, c
     };
 
-    mat3x3 T {
+    ndtcpp::mat3x3 T {
         R.a, R.b, point.x,
         R.c, R.d, point.y,
         0.0f, 0.0f, 1.0f
@@ -229,8 +152,8 @@ mat3x3 expmap(const point3& point){
     return T;
 }
 
-point2 transformPointCopy(const mat3x3& mat, const point2& point) {
-    point2 transformedPoint;
+ndtcpp::point2 transformPointCopy(const ndtcpp::mat3x3& mat, const ndtcpp::point2& point) {
+    ndtcpp::point2 transformedPoint;
 
     transformedPoint.x = mat.a * point.x + mat.b * point.y + mat.c;
     transformedPoint.y = mat.d * point.x + mat.e * point.y + mat.f;
@@ -238,7 +161,7 @@ point2 transformPointCopy(const mat3x3& mat, const point2& point) {
     return transformedPoint;
 }
 
-mat3x3 inverse3x3Copy(const mat3x3& mat){
+ndtcpp::mat3x3 inverse3x3Copy(const ndtcpp::mat3x3& mat){
     const auto a = 1.0 / (
         mat.a * mat.e * mat.i +
         mat.b * mat.f * mat.g +
@@ -248,7 +171,7 @@ mat3x3 inverse3x3Copy(const mat3x3& mat){
         mat.a * mat.f * mat.h
         );
 
-    mat3x3 inv_mat;
+    ndtcpp::mat3x3 inv_mat;
     inv_mat.a = mat.e * mat.i - mat.f * mat.h;
     inv_mat.b = mat.b * mat.i - mat.c * mat.h;
     inv_mat.c = mat.b * mat.f - mat.c * mat.e;
@@ -277,16 +200,16 @@ mat3x3 inverse3x3Copy(const mat3x3& mat){
     return inv_mat;
 }
 
-point2 skewd(const point2& input_point){
-    const point2 skewd_point {
+ndtcpp::point2 skewd(const ndtcpp::point2& input_point){
+    const ndtcpp::point2 skewd_point {
         input_point.y,
         input_point.x * -1.0f
     };
     return skewd_point;
 }
 
-mat3x3 transpose(const mat3x3& input_mat){
-    const mat3x3 transpose_mat{
+ndtcpp::mat3x3 transpose(const ndtcpp::mat3x3& input_mat){
+    const ndtcpp::mat3x3 transpose_mat{
         input_mat.a, input_mat.d, input_mat.g,
         input_mat.b, input_mat.e, input_mat.h,
         input_mat.c, input_mat.f, input_mat.i
@@ -294,8 +217,8 @@ mat3x3 transpose(const mat3x3& input_mat){
     return transpose_mat;
 }
 
-point2 compute_mean(const std::vector<point2>& points){
-    point2 mean;
+ndtcpp::point2 compute_mean(const std::vector<ndtcpp::point2>& points){
+    ndtcpp::point2 mean;
     mean.x = 0.0f;
     mean.y = 0.0f;
     for(const auto& point : points){
@@ -307,7 +230,7 @@ point2 compute_mean(const std::vector<point2>& points){
     return mean;
 }
 
-mat2x2 compute_covariance(const std::vector<point2>& points, const point2& mean){
+ndtcpp::mat2x2 compute_covariance(const std::vector<ndtcpp::point2>& points, const ndtcpp::point2& mean){
     auto point_size = points.size();
     auto vxx = 0.0f;
     auto vxy = 0.0f;
@@ -321,7 +244,7 @@ mat2x2 compute_covariance(const std::vector<point2>& points, const point2& mean)
         vyy += dy * dy;
     }
 
-    mat2x2 cov;
+    ndtcpp::mat2x2 cov;
     cov.a = vxx / point_size;
     cov.b = vxy / point_size;
     cov.c = vxy / point_size;
@@ -329,16 +252,16 @@ mat2x2 compute_covariance(const std::vector<point2>& points, const point2& mean)
     return cov;
 }
 
-void compute_ndt_points(std::vector<point2>& points, std::vector<ndtpoint2> &results){
+void compute_ndt_points(std::vector<ndtcpp::point2>& points, std::vector<ndtpoint2> &results){
     auto N = 10;
 
     const auto point_size = points.size();
 
     kdtree::construct(points.begin(), points.end());
-    std::vector<point2> result_points(N);
+    std::vector<ndtcpp::point2> result_points(N);
     std::vector<float> result_distances(N);
 
-    std::vector<mat2x2> covs(point_size);
+    std::vector<ndtcpp::mat2x2> covs(point_size);
     results.resize(point_size);
 
     for(std::size_t i = 0; i < point_size; i++) {
@@ -349,7 +272,7 @@ void compute_ndt_points(std::vector<point2>& points, std::vector<ndtpoint2> &res
     }
 }
 
-void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_points, std::vector<ndtpoint2>& target_points){
+void ndt_scan_matching(ndtcpp::mat3x3& trans_mat, const std::vector<ndtcpp::point2>& source_points, std::vector<ndtpoint2>& target_points){
     const size_t max_iter_num = 20;
     const float max_distance2 = 3.0f * 3.0f;
 
@@ -358,13 +281,13 @@ void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_poin
 
     kdtree::construct(target_points.begin(), target_points.end());
     for(size_t iter = 0; iter < max_iter_num; iter++){
-        mat3x3 H_Mat {
+        ndtcpp::mat3x3 H_Mat {
             0.0f, 0.0f, 0.0f,
             0.0f, 0.0f, 0.0f,
             0.0f, 0.0f, 0.0f
         };
 
-        point3 b_Point {
+        ndtcpp::point3 b_Point {
             0.0f, 0.0f, 0.0f
         };
 
@@ -376,41 +299,41 @@ void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_poin
 
             if(target_distance > max_distance2){continue;}
 
-            const auto identity_plus_cov = mat3x3{
+            const auto identity_plus_cov = ndtcpp::mat3x3{
                 target_point.cov.a, target_point.cov.b, 0.0f,
                 target_point.cov.c, target_point.cov.d, 0.0f,
                 0.0f, 0.0f, 1.0f
             };
 
-            const mat3x3 target_cov_inv = inverse3x3Copy(identity_plus_cov); //IM
+            const ndtcpp::mat3x3 target_cov_inv = inverse3x3Copy(identity_plus_cov); //IM
 
 
-            const auto error = point3{
+            const auto error = ndtcpp::point3{
                 target_point.mean.x - query_point.mean.x,
                 target_point.mean.y - query_point.mean.y,
                 0.0f
             };
 
-            const point2 v_point = transformPointCopy(trans_mat, skewd(source_points[point_iter]));
+            const ndtcpp::point2 v_point = transformPointCopy(trans_mat, skewd(source_points[point_iter]));
 
-            const auto mat_J = mat3x3{
+            const auto mat_J = ndtcpp::mat3x3{
                 trans_mat.a * -1.0f, trans_mat.b * -1.0f, v_point.x,
                 trans_mat.d * -1.0f, trans_mat.e * -1.0f, v_point.y,
                 trans_mat.g * -1.0f, trans_mat.h * -1.0f, trans_mat.i * -1.0f
             };
 
-            const mat3x3 mat_J_T = transpose(mat_J);
+            const ndtcpp::mat3x3 mat_J_T = transpose(mat_J);
 
-            addMat3x3(H_Mat, multiplyMatrices3x3x2(mat_J_T, multiplyMatrices3x3x2(target_cov_inv, mat_J)));
+            H_Mat += (mat_J_T * (target_cov_inv * mat_J));
 
-            addPoint3(b_Point, multiplyMatrixPoint3(mat_J_T, multiplyMatrixPoint3(target_cov_inv, error)));
+            b_Point += (mat_J_T * (target_cov_inv * error));
 
         }
         b_Point.x *= -1.0;
         b_Point.y *= -1.0;
         b_Point.z *= -1.0;
-        const point3 delta = solve3x3(H_Mat,b_Point);
-        trans_mat = multiplyMatrices3x3x2(trans_mat, expmap(delta));
+        const ndtcpp::point3 delta = solve3x3(H_Mat,b_Point);
+        trans_mat = trans_mat * expmap(delta);
 
         if(multtiplyPowPoint3(delta) < 1e-4){
             std::cout << "END NDT. ITER: " << iter << std::endl;
@@ -420,7 +343,7 @@ void ndt_scan_matching(mat3x3& trans_mat, const std::vector<point2>& source_poin
 }
 
 //debug
-void writePointsToSVG(const std::vector<point2>& point_1, const std::vector<point2>& point_2, const std::string& file_name) {
+void writePointsToSVG(const std::vector<ndtcpp::point2>& point_1, const std::vector<ndtcpp::point2>& point_2, const std::string& file_name) {
     std::ofstream file(file_name);
     if (!file.is_open()) {
         std::cerr << "Cannot open file for writing." << std::endl;
@@ -443,10 +366,8 @@ void writePointsToSVG(const std::vector<point2>& point_1, const std::vector<poin
 }
 
 int main(void){
-    std::vector<point2> scan_points1;
-    std::vector<point2> target_points;
-    readScanPoints("./data/scan_1.txt", scan_points1);
-    readScanPoints("./data/scan_2.txt", target_points);
+    auto scan_points1 = ndtcpp::read_scan_points("./data/scan_1.txt");
+    auto target_points = ndtcpp::read_scan_points("./data/scan_2.txt");
 
     auto trans_mat1 = makeTransformationMatrix(1.0f, 0.0f, 0.5f);
     transformPointsZeroCopy(trans_mat1, scan_points1);
