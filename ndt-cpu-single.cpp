@@ -147,6 +147,36 @@ ndtcpp::point3 solve3x3(const ndtcpp::mat3x3& m, const ndtcpp::point3& p) {
     return solution;
 }
 
+ndtcpp::point3 solve3x3_LU(const ndtcpp::mat3x3& m, const ndtcpp::point3& p) {
+    const float u11 = m.a;
+    const float u12 = m.b;
+    const float u13 = m.c;
+    const float l21 = m.d / u11;
+    const float u22 = m.e - l21 * u12;
+    const float u23 = m.f - l21 * u13;
+    const float l31 = m.g / u11;
+    const float l32 = (m.h - l31 * u12) / u22;
+    const float u33 = m.i - l31 * u13 - l32 * u23;
+    // ndtcpp::mat3x3 L = {
+    //     1.0f, 0.0f, 0.0f,
+    //      l21, 1.0f, 0.0f,
+    //      l31,  l32, 1.0f
+    // };
+    // ndtcpp::mat3x3 U = {
+    //     u11,  u12,  u13,
+    //     0.0f, u22,  u23,
+    //     0.0f, 0.0f, u33
+    // };
+    const float y1 = p.x;
+    const float y2 = p.y - l21 * y1;
+    const float y3 = p.z - l31 * y1 - l32 * y2;
+
+    const float x3 = y3 / u33;
+    const float x2 = (y2 - u23 * x3) / u22;
+    const float x1 = (y1 - u12 * x2 - u23 * x3) / u11;
+
+    return {x1, x2, x3};
+}
 ndtcpp::mat3x3 expmap(const ndtcpp::point3& point){
     auto t = point.z;
     auto c = cosf(t);
@@ -398,7 +428,8 @@ void ndt_scan_matching(
         H_Mat.e += 1e-6;
         H_Mat.i += 1e-6;
 
-        const ndtcpp::point3 delta = solve3x3(H_Mat, b_Point);
+        // const ndtcpp::point3 delta = solve3x3(H_Mat, b_Point);
+        const ndtcpp::point3 delta = solve3x3_LU(H_Mat, b_Point);
         trans_mat = trans_mat * expmap(delta);
 
         const float error = multiplyPowPoint3(delta);
