@@ -18,6 +18,7 @@
 #include <vector>
 #include <sstream>
 #include <cmath>
+#include <unordered_map>
 
 #include <chrono>
 
@@ -59,6 +60,17 @@ struct kdtree::trait::dimension<ndtpoint2> {
 };
 
 
+struct tuple_int_hash {
+  size_t operator()(const std::tuple<int, int>& v) const {
+    const auto hash0 = std::hash<int>{}(std::get<0>(v));
+    const auto hash1 = std::hash<int>{}(std::get<1>(v));
+    size_t seed = 0;
+    seed ^= hash0 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    seed ^= hash1 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    return seed;
+  }
+};
+
 
 ndtcpp::mat3x3 makeTransformationMatrix(const float& tx, const float& ty, const float& theta) {
     ndtcpp::mat3x3 mat = {
@@ -80,7 +92,7 @@ void transformPointsZeroCopy(const ndtcpp::mat3x3& mat, std::vector<ndtcpp::poin
     }
 }
 
-float multtiplyPowPoint3(const ndtcpp::point3& vec){
+float multiplyPowPoint3(const ndtcpp::point3& vec){
     return vec.x * vec.x + vec.y * vec.y + vec.z * vec.z;
 }
 
@@ -247,7 +259,7 @@ ndtcpp::mat2x2 compute_covariance(const std::vector<ndtcpp::point2>& points, con
     ndtcpp::mat2x2 cov;
     cov.a = vxx / point_size;
     cov.b = vxy / point_size;
-    cov.c = vxy / point_size;
+    cov.c = cov.b;
     cov.d = vyy / point_size;
     return cov;
 }
@@ -272,12 +284,58 @@ void compute_ndt_points(std::vector<ndtcpp::point2>& points, std::vector<ndtpoin
     }
 }
 
-void ndt_scan_matching(ndtcpp::mat3x3& trans_mat, const std::vector<ndtcpp::point2>& source_points, std::vector<ndtpoint2>& target_points){
+inline void compute_ndt_points2(
+    const std::vector<ndtcpp::point2>& points, std::vector<ndtpoint2> &results,
+    float voxel_size = 1.0f, std::size_t voxel_min_count = 4){
+
+    const auto point_size = points.size();
+
+    std::unordered_map<std::tuple<int, int>, std::vector<size_t>, tuple_int_hash> voxel_indices;
+    const float voxel_size_inv = 1.0f / voxel_size;
+
+    for(size_t i = 0; i < point_size; i++) {
+        const auto& pt0 = points[i];
+        const std::tuple<int, int> voxel = {
+            std::floor(pt0.x * voxel_size_inv),
+            std::floor(pt0.y * voxel_size_inv)
+        };
+
+        voxel_indices[voxel].push_back(i);
+    }
+
+    results.clear();
+    results.reserve(voxel_indices.size());
+    for (const auto& [voxel, indices]: voxel_indices) {
+        if (indices.size() < voxel_min_count) continue;
+
+        std::vector<ndtcpp::point2> result_points;
+        result_points.reserve(indices.size());
+        for (const auto& i: indices) {
+            result_points.push_back(points[i]);
+        }
+        const auto mean = compute_mean(result_points);
+        const auto cov = compute_covariance(result_points, mean);
+        results.push_back({mean, cov});
+    }
+}
+
+void ndt_scan_matching(
+    ndtcpp::mat3x3& trans_mat,
+    const std::vector<ndtcpp::point2>& source_points,
+    std::vector<ndtpoint2>& target_points, bool verbose = false
+) {
     const size_t max_iter_num = 20;
-    const float max_distance2 = 3.0f * 3.0f;
+    const float max_correspondence_distance = 3.0f;
+    const float max_distance2 = max_correspondence_distance * max_correspondence_distance;
+    const size_t point_step = 10;
 
     const size_t target_points_size = target_points.size();
     const size_t source_points_size = source_points.size();
+
+    bool is_converged = false;
+    ndtcpp::point3 prev_delta;
+    float min_error = std::numeric_limits<float>::max();
+    ndtcpp::mat3x3 min_trans_mat;
 
     kdtree::construct(target_points.begin(), target_points.end());
     for(size_t iter = 0; iter < max_iter_num; iter++){
@@ -291,7 +349,7 @@ void ndt_scan_matching(ndtcpp::mat3x3& trans_mat, const std::vector<ndtcpp::poin
             0.0f, 0.0f, 0.0f
         };
 
-        for(auto point_iter = 0; point_iter < source_points_size; point_iter += 10){
+        for(auto point_iter = 0; point_iter < source_points_size; point_iter += point_step){
             ndtpoint2 query_point = {transformPointCopy(trans_mat, source_points[point_iter]), {}};
             ndtpoint2 target_point;
             float target_distance;
@@ -329,15 +387,47 @@ void ndt_scan_matching(ndtcpp::mat3x3& trans_mat, const std::vector<ndtcpp::poin
             b_Point += (mat_J_T * (target_cov_inv * error));
 
         }
-        b_Point.x *= -1.0;
-        b_Point.y *= -1.0;
-        b_Point.z *= -1.0;
+        b_Point.x *= -1.0f;
+        b_Point.y *= -1.0f;
+        b_Point.z *= -1.0f;
         const ndtcpp::point3 delta = solve3x3(H_Mat,b_Point);
         trans_mat = trans_mat * expmap(delta);
 
-        if(multtiplyPowPoint3(delta) < 1e-4){
-            std::cout << "END NDT. ITER: " << iter << std::endl;
+        const float error = multiplyPowPoint3(delta);
+        if(error < 1e-4){
+            is_converged = true;
+        }
+
+        if (iter > 0) {
+            const ndtcpp::point3 ddelta = {
+                prev_delta.x - delta.x, prev_delta.y - delta.y, prev_delta.z - delta.z
+            };
+            const auto d = std::max(std::max(std::fabs(ddelta.x), std::fabs(ddelta.y)), std::fabs(ddelta.z));
+            if (d < 1e-4) {
+                is_converged = true;
+            }
+        }
+
+        if (is_converged) {
+            if (verbose) {
+                std::cout << "END NDT. ITER: " << iter;
+                std::cout << ", ERROR VALUE: " << error << std::endl;
+            }
             break;
+        }
+
+        prev_delta = delta;
+
+        if (min_error > error) {
+            min_error = error;
+            min_trans_mat = trans_mat;
+        }
+
+        if (iter == max_iter_num - 1) {
+            if (verbose) {
+                std::cout << "END NDT NOT CONVERGED. ERROR VALUE: " << min_error << std::endl;
+            }
+            trans_mat = min_trans_mat;
         }
     }
 }
@@ -365,6 +455,49 @@ void writePointsToSVG(const std::vector<ndtcpp::point2>& point_1, const std::vec
     file.close();
 }
 
+void writePointsToSVG(const std::vector<ndtcpp::point2>& point_1, const std::vector<ndtpoint2>& point_2, const std::string& file_name) {
+    std::ofstream file(file_name);
+    if (!file.is_open()) {
+        std::cerr << "Cannot open file for writing." << std::endl;
+        return;
+    }
+    const float scale = 10.0f;
+    const float ellipse_scale = 3.0f;
+    const float offset = 200.0f;
+    const std::string ellipse_color = "green";
+
+    file << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"500\" height=\"500\">\n";
+    file << "<rect width=\"100%\" height=\"100%\" fill=\"white\" stroke='black'/>\n";
+    file << "<g fill='#fff' stroke='#ddd' stroke-width='1'>\n";
+    file << "<path d='M250,0 L250,500' />\n";
+    file << "<path d='M0,250 L500,250' />\n";
+    file << "</g>\n";
+
+    for (const auto& point : point_1) {
+        file << "<circle cx=\"" << point.x * scale + offset << "\" cy=\"" << point.y * scale + offset << "\" r=\"1\" fill=\"red\" />\n";
+    }
+
+    for (const auto& point : point_2) {
+        const auto cx = point.mean.x * scale + offset;
+        const auto cy = point.mean.y * scale + offset;
+        const auto& cov = point.cov;
+        const float u = 0.5f * ((cov.a + cov.d) + std::sqrt((cov.a - cov.d) * (cov.a - cov.d) + 4.0f * cov.b * cov.b));
+        const float v = 0.5f * ((cov.a + cov.d) - std::sqrt((cov.a - cov.d) * (cov.a - cov.d) + 4.0f * cov.b * cov.b));
+        const float e1 = (u - cov.a) / cov.b;
+        const float e2 = (v - cov.a) / cov.b;
+        // 95%
+        const float rx = 2.0f * 2.448f * std::sqrt(u) * ellipse_scale;
+        const float ry = 2.0f * 2.448f * std::sqrt(v) * ellipse_scale;
+        const auto rot = std::atan(e1) * (180.0f / M_PI);
+
+        file << "<ellipse cx='" << cx << "' cy='" << cy << "' rx='" << rx << "' ry='" << ry << "' fill='" << ellipse_color << "' fill-opacity='0.5' transform='rotate(" << rot << ", " << cx << ", " << cy << ")'/>\n";
+        file << "<circle cx=\"" << cx << "\" cy=\"" << cy << "\" r=\"1\" fill=\"black\" />\n";
+    }
+
+    file << "</svg>\n";
+    file.close();
+}
+
 int main(void){
     auto scan_points1 = ndtcpp::read_scan_points("./data/scan_1.txt");
     auto target_points = ndtcpp::read_scan_points("./data/scan_2.txt");
@@ -375,7 +508,8 @@ int main(void){
     auto ndt_points = std::vector<ndtpoint2>();
     auto start_time = std::chrono::high_resolution_clock::now();
 
-    compute_ndt_points(target_points, ndt_points);
+    // compute_ndt_points(target_points, ndt_points);
+    compute_ndt_points2(target_points, ndt_points);
     ndt_scan_matching(trans_mat1, scan_points1, ndt_points);
 
     auto end_time = std::chrono::high_resolution_clock::now();
@@ -387,4 +521,5 @@ int main(void){
     std::cout << (microsec) << " mill sec" << std::endl;
 
     writePointsToSVG(scan_points1, target_points, "scan_points.svg");
+    writePointsToSVG(scan_points1, ndt_points, "scan_points_ndt.svg");
 }
