@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#ifndef NDTCPP_NDT_CPU_SINGLE_HPP_
+#define NDTCPP_NDT_CPU_SINGLE_HPP_
+
 #include <cstddef>
 #include <fstream>
 #include <iostream>
@@ -19,15 +22,20 @@
 #include <vector>
 #include <unordered_map>
 #include <cmath>
-#include <numeric>
-
-#include <chrono>
+#include <limits>
 
 #include "flatkdtree.h"
 #include "type.hpp"
 #include "ndtcpputil.hpp"
 #include "matrixutil.hpp"
 
+
+namespace ndtcpp {
+struct ndtpoint2 {
+    ndtcpp::point2 mean;
+    ndtcpp::mat2x2 cov;
+};
+} // namespace ndtcpp
 
 template <std::size_t I>
 struct kdtree::trait::access<ndtcpp::point2, I> {
@@ -42,25 +50,43 @@ struct kdtree::trait::dimension<ndtcpp::point2> {
     static constexpr std::size_t value = 2;
 };
 
-struct ndtpoint2 {
-    ndtcpp::point2 mean;
-    ndtcpp::mat2x2 cov;
-};
-
 template <std::size_t I>
-struct kdtree::trait::access<ndtpoint2, I> {
-    static auto get(const ndtpoint2 &p) -> float
+struct kdtree::trait::access<ndtcpp::ndtpoint2, I> {
+    static auto get(const ndtcpp::ndtpoint2 &p) -> float
     {
         return I == 0 ? p.mean.x : p.mean.y;
     }
 };
 
 template <>
-struct kdtree::trait::dimension<ndtpoint2> {
+struct kdtree::trait::dimension<ndtcpp::ndtpoint2> {
     static constexpr std::size_t value = 2;
 };
 
+namespace ndtcpp {
 
+inline ndtcpp::mat3x3 makeTransformationMatrix(const float& tx, const float& ty, const float& theta) {
+    ndtcpp::mat3x3 mat = {
+        cosf(theta), sinf(theta) * -1.0f, tx,
+        sinf(theta), cosf(theta)        , ty,
+        0.0f, 0.0f, 1.0f
+    };
+    return mat;
+}
+
+inline void transformPointsZeroCopy(const ndtcpp::mat3x3& mat, std::vector<ndtcpp::point2>& points) {
+    ndtcpp::point2 transformedPoint;
+
+    for (auto& point : points) {
+        transformedPoint.x = mat.a * point.x + mat.b * point.y + mat.c;
+        transformedPoint.y = mat.d * point.x + mat.e * point.y + mat.f;
+        point.x = transformedPoint.x;
+        point.y = transformedPoint.y;
+    }
+}
+
+
+namespace {
 struct tuple_int_hash {
   size_t operator()(const std::tuple<int, int>& v) const {
     const auto hash0 = std::hash<int>{}(std::get<0>(v));
@@ -72,32 +98,11 @@ struct tuple_int_hash {
   }
 };
 
-
-ndtcpp::mat3x3 makeTransformationMatrix(const float& tx, const float& ty, const float& theta) {
-    ndtcpp::mat3x3 mat = {
-        cosf(theta), sinf(theta) * -1.0f, tx,
-        sinf(theta), cosf(theta)        , ty,
-        0.0f, 0.0f, 1.0f
-    };
-    return mat;
-}
-
-void transformPointsZeroCopy(const ndtcpp::mat3x3& mat, std::vector<ndtcpp::point2>& points) {
-    ndtcpp::point2 transformedPoint;
-
-    for (auto& point : points) {
-        transformedPoint.x = mat.a * point.x + mat.b * point.y + mat.c;
-        transformedPoint.y = mat.d * point.x + mat.e * point.y + mat.f;
-        point.x = transformedPoint.x;
-        point.y = transformedPoint.y;
-    }
-}
-
-float multiplyPowPoint3(const ndtcpp::point3& vec){
+inline float multiplyPowPoint3(const ndtcpp::point3& vec){
     return vec.x * vec.x + vec.y * vec.y + vec.z * vec.z;
 }
 
-ndtcpp::point3 solve3x3(const ndtcpp::mat3x3& m, const ndtcpp::point3& p) {
+inline ndtcpp::point3 solve3x3(const ndtcpp::mat3x3& m, const ndtcpp::point3& p) {
     float A[3][4] = {
         {m.a, m.b, m.c, p.x},
         {m.d, m.e, m.f, p.y},
@@ -147,7 +152,7 @@ ndtcpp::point3 solve3x3(const ndtcpp::mat3x3& m, const ndtcpp::point3& p) {
     return solution;
 }
 
-ndtcpp::point3 solve3x3_LU(const ndtcpp::mat3x3& m, const ndtcpp::point3& p) {
+inline ndtcpp::point3 solve3x3_LU(const ndtcpp::mat3x3& m, const ndtcpp::point3& p) {
     const float u11 = m.a;
     const float u12 = m.b;
     const float u13 = m.c;
@@ -177,7 +182,8 @@ ndtcpp::point3 solve3x3_LU(const ndtcpp::mat3x3& m, const ndtcpp::point3& p) {
 
     return {x1, x2, x3};
 }
-ndtcpp::mat3x3 expmap(const ndtcpp::point3& point){
+
+inline ndtcpp::mat3x3 expmap(const ndtcpp::point3& point){
     auto t = point.z;
     auto c = cosf(t);
     auto s = sinf(t);
@@ -196,7 +202,7 @@ ndtcpp::mat3x3 expmap(const ndtcpp::point3& point){
     return T;
 }
 
-ndtcpp::point2 transformPointCopy(const ndtcpp::mat3x3& mat, const ndtcpp::point2& point) {
+inline ndtcpp::point2 transformPointCopy(const ndtcpp::mat3x3& mat, const ndtcpp::point2& point) {
     ndtcpp::point2 transformedPoint;
 
     transformedPoint.x = mat.a * point.x + mat.b * point.y + mat.c;
@@ -205,7 +211,7 @@ ndtcpp::point2 transformPointCopy(const ndtcpp::mat3x3& mat, const ndtcpp::point
     return transformedPoint;
 }
 
-ndtcpp::mat3x3 inverse3x3Copy(const ndtcpp::mat3x3& mat){
+inline ndtcpp::mat3x3 inverse3x3Copy(const ndtcpp::mat3x3& mat){
     const auto a = 1.0f / (
         mat.a * mat.e * mat.i +
         mat.b * mat.f * mat.g +
@@ -244,7 +250,7 @@ ndtcpp::mat3x3 inverse3x3Copy(const ndtcpp::mat3x3& mat){
     return inv_mat;
 }
 
-ndtcpp::point2 skewd(const ndtcpp::point2& input_point){
+inline ndtcpp::point2 skewd(const ndtcpp::point2& input_point){
     const ndtcpp::point2 skewd_point {
         input_point.y,
         input_point.x * -1.0f
@@ -252,7 +258,7 @@ ndtcpp::point2 skewd(const ndtcpp::point2& input_point){
     return skewd_point;
 }
 
-ndtcpp::mat3x3 transpose(const ndtcpp::mat3x3& input_mat){
+inline ndtcpp::mat3x3 transpose(const ndtcpp::mat3x3& input_mat){
     const ndtcpp::mat3x3 transpose_mat{
         input_mat.a, input_mat.d, input_mat.g,
         input_mat.b, input_mat.e, input_mat.h,
@@ -261,7 +267,7 @@ ndtcpp::mat3x3 transpose(const ndtcpp::mat3x3& input_mat){
     return transpose_mat;
 }
 
-ndtcpp::point2 compute_mean(const std::vector<ndtcpp::point2>& points){
+inline ndtcpp::point2 compute_mean(const std::vector<ndtcpp::point2>& points){
     ndtcpp::point2 mean;
     mean.x = 0.0f;
     mean.y = 0.0f;
@@ -274,7 +280,7 @@ ndtcpp::point2 compute_mean(const std::vector<ndtcpp::point2>& points){
     return mean;
 }
 
-ndtcpp::mat2x2 compute_covariance(const std::vector<ndtcpp::point2>& points, const ndtcpp::point2& mean){
+inline ndtcpp::mat2x2 compute_covariance(const std::vector<ndtcpp::point2>& points, const ndtcpp::point2& mean){
     auto point_size = points.size();
     auto vxx = 0.0f;
     auto vxy = 0.0f;
@@ -296,7 +302,9 @@ ndtcpp::mat2x2 compute_covariance(const std::vector<ndtcpp::point2>& points, con
     return cov;
 }
 
-void compute_ndt_points(std::vector<ndtcpp::point2>& points, std::vector<ndtpoint2> &results){
+} // namespace
+
+inline void compute_ndt_points(std::vector<ndtcpp::point2>& points, std::vector<ndtpoint2> &results){
     auto N = 10;
 
     const auto point_size = points.size();
@@ -316,7 +324,7 @@ void compute_ndt_points(std::vector<ndtcpp::point2>& points, std::vector<ndtpoin
     }
 }
 
-void compute_ndt_points2(
+inline void compute_ndt_points_downsampling(
     const std::vector<ndtcpp::point2>& points, std::vector<ndtpoint2> &results,
     float voxel_size = 1.0f, std::size_t voxel_min_count = 4) {
 
@@ -351,7 +359,7 @@ void compute_ndt_points2(
     }
 }
 
-void ndt_scan_matching(
+inline void ndt_scan_matching(
     ndtcpp::mat3x3& trans_mat,
     const std::vector<ndtcpp::point2>& source_points,
     std::vector<ndtpoint2>& target_points, bool verbose = false
@@ -428,8 +436,8 @@ void ndt_scan_matching(
         H_Mat.e += 1e-6;
         H_Mat.i += 1e-6;
 
-        // const ndtcpp::point3 delta = solve3x3(H_Mat, b_Point);
-        const ndtcpp::point3 delta = solve3x3_LU(H_Mat, b_Point);
+        const ndtcpp::point3 delta = solve3x3(H_Mat, b_Point);
+        // const ndtcpp::point3 delta = solve3x3_LU(H_Mat, b_Point);
         trans_mat = trans_mat * expmap(delta);
 
         const float error = multiplyPowPoint3(delta);
@@ -472,7 +480,7 @@ void ndt_scan_matching(
 }
 
 //debug
-void writePointsToSVG(const std::vector<ndtcpp::point2>& point_1, const std::vector<ndtcpp::point2>& point_2, const std::string& file_name) {
+inline void writePointsToSVG(const std::vector<ndtcpp::point2>& point_1, const std::vector<ndtcpp::point2>& point_2, const std::string& file_name) {
     std::ofstream file(file_name);
     if (!file.is_open()) {
         std::cerr << "Cannot open file for writing." << std::endl;
@@ -494,7 +502,7 @@ void writePointsToSVG(const std::vector<ndtcpp::point2>& point_1, const std::vec
     file.close();
 }
 
-void writePointsToSVG(const std::vector<ndtcpp::point2>& point_1, const std::vector<ndtpoint2>& point_2, const std::string& file_name, float voxel_size=1.0f) {
+inline void writePointsToSVG(const std::vector<ndtcpp::point2>& point_1, const std::vector<ndtpoint2>& point_2, const std::string& file_name, float voxel_size=1.0f) {
     std::ofstream file(file_name);
     if (!file.is_open()) {
         std::cerr << "Cannot open file for writing." << std::endl;
@@ -548,43 +556,6 @@ void writePointsToSVG(const std::vector<ndtcpp::point2>& point_1, const std::vec
     file.close();
 }
 
+} // namespace ndt_cpp
 
-int main(void){
-
-    auto scan_points1 = ndtcpp::read_scan_points("./data/scan_1.txt");
-    auto target_points = ndtcpp::read_scan_points("./data/scan_2.txt");
-
-    std::vector<double> durations;
-    const size_t N = 10;
-
-    for (size_t i = 0; i < N; ++i) {
-
-        auto source = scan_points1;
-        auto target = target_points;
-        auto trans_mat1 = makeTransformationMatrix(1.0f, 0.0f, 0.5f);
-        transformPointsZeroCopy(trans_mat1, source);
-
-        auto ndt_points = std::vector<ndtpoint2>();
-        auto start_time = std::chrono::high_resolution_clock::now();
-
-        const bool verbose = true;
-        // compute_ndt_points(target, ndt_points);
-        compute_ndt_points2(target, ndt_points);
-        ndt_scan_matching(trans_mat1, source, ndt_points, verbose);
-
-        auto end_time = std::chrono::high_resolution_clock::now();
-
-        transformPointsZeroCopy(trans_mat1, source);
-
-        //debug
-        auto microsec = std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count() / 1e6;
-        durations.push_back(microsec);
-        if (i == N - 1) {
-            writePointsToSVG(source, target, "scan_points.svg");
-            writePointsToSVG(source, ndt_points, "scan_points_ndt.svg");
-        }
-    }
-    const double mean = std::accumulate(durations.begin(), durations.end(), 0.0) / durations.size();
-    std::cout << "MEAN: " << mean << " mill sec" << std::endl;
-
-}
+#endif // NDTCPP_NDT_CPU_SINGLE_HPP_

@@ -11,12 +11,16 @@ https://github.com/TakanoTaiga/ndt_cpp/assets/53041471/510656ef-73a8-49dd-b51f-6
 
 g++
 ```
-g++ -O2 ./ndt-cpu-single.cpp && ./a.out
+g++ -O2 ./main.cpp -o main.out && ./main.out
+
+g++ -O2 ./main_downsample.cpp -o main2.out && ./main2.out
 ```
 
 NVIDIA HPC SDK
 ```
-nvc++ -fast -O2 ./ndt-cpu-single.cpp && ./a.out
+nvc++ -fast -O2 ./main.cpp -o main.out && ./main.out
+
+nvc++ -fast -O2 ./main_downsample.cpp -o main2.out && ./main2.out
 ```
 
 
