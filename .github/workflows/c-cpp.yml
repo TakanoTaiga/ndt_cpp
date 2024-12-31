@@ -13,7 +13,10 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
-    - name: build
+
+    - name: build-main_downsample
       run: |
-        g++ -std=c++17 -O2 main_downsample.cpp
-        g++ -std=c++17 -O2 main.cpp
+        g++ -std=c++17 -O2 main_downsample.cpp && ./a.out
+    - name: build-main
+      run: |
+        g++ -std=c++17 -O2 main.cpp && ./a.out
