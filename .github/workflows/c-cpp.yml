@@ -14,4 +14,6 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: build
-      run: g++ -std=c++17 -O2 ./*.cpp
+      run: |
+        g++ -std=c++17 -O2 main_downsample.cpp
+        g++ -std=c++17 -O2 main.cpp
